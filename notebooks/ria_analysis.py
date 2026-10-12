@@ -134,7 +134,8 @@ for f in sorted(RAW.iterdir()):
 # | Key | `SEC#` must match `801-XXXXX`; one row per firm-year (latest filing wins) | Stable firm key across years |
 # | Dollars | Strip `$`, commas → float | AUM is stored as `"1,432,805,003.00"` |
 # | Dates | Mixed formats (`MM/DD/YYYY` in CSVs, ISO in Excel) | Excel and CSV years export dates differently |
-# | Website | Normalise to `www.domain.com`; drop social/app links; across all six years pick the domain that matches the firm's name, else the latest valid one (`website_source` records which) | The bulk file carries only one of a firm's URLs per year, often a social profile or an unrelated page |
+# | Website | Normalise to `www.domain.com` (sub-domains reduced to the firm's main domain, e.g. `connect.creativeplanning.com` → `www.creativeplanning.com`); drop social/app links and free-hosting pages (wordpress.com, blogspot.com …); across all six years pick the domain that matches the firm's name, else the latest valid one (`website_source` records which) | The bulk file carries only one of a firm's URLs per year, often a social profile or an unrelated page |
+# | City / State / Country | Main-office address; if blank (~8% of filings), the mailing address, then the books-and-records address, then the firm's address from its nearest other year (`location_source` records which). State is blank for non-US firms by design; `country` carries their location | The bulk file leaves the main-office block empty for some filers |
 # | Clients | Σ Item 5.D(1) client counts over all 14 client types + Item 5.C(1) (clients with no AUM, e.g. planning-only) | Item 5 has no single "total clients" field |
 # | Client edge cases | "Fewer than 5" boxes → impute 2; 5.C(1) values that are really dollar amounts → dropped | See QA log below |
 # | Advisors | Item 5.B(1): employees who perform investment advisory functions | Closest Form ADV proxy for advisor headcount |
@@ -211,11 +212,12 @@ REQUIRED = {
     "advisors": "Number of Advisors", "aum_per_advisor": "AUM per Advisor (USD)",
     "filing_date": "Filing Date", "year": "Year",
 }
-EXTRA = ["segment", "wealth_manager", "digital_or_platform", "pct_aum_individuals", "pct_aum_hnw",
+EXTRA = ["country", "location_source", "segment", "wealth_manager", "digital_or_platform", "pct_aum_individuals", "pct_aum_hnw",
          "clients_per_advisor", "website_source", "social_url", "crd", "legal_name", "sec_status", "snapshot_date", "source_file",
          "clients_imputed_flag", "clients_5c_invalid_flag", "website_filled_flag", "succession_flag"]
 
 EXTRA_NAMES = {
+    "country": "Country", "location_source": "Location Source",
     "segment": "Segment", "wealth_manager": "Wealth Manager", "digital_or_platform": "Digital or Platform",
     "pct_aum_individuals": "% AUM Individuals", "pct_aum_hnw": "% AUM HNW",
     "clients_per_advisor": "Clients per Advisor", "website_source": "Website Source",
@@ -653,14 +655,15 @@ pd.DataFrame({
 # | **Firm identity** | Firm = SEC# (801-). Re-registrations under a new SEC# and multi-entity groups (e.g. separate RIAs for one brand) are not merged. | Some "new" fast growers are reorganisations; flagged via the step-change rule. |
 # | **Survivorship** | Growth requires presence in both years. Firms that deregistered or moved to state registration drop out. | Rankings describe surviving firms, which is the right population for prospecting. |
 # | **Segment boundaries** | Lower bound inclusive: exactly $1B is in "$1B–$10B". | Negligible. |
-# | **Websites** | The bulk file holds one URL per firm-year (often a social profile). Best domain chosen across six years by firm-name match. | ~80% of firms get a website: ~2/3 name-matched (high confidence), ~1/8 "latest" (lower confidence, flagged in `website_source`). Full lists live in IAPD Schedule D 1.I. Some large managers (e.g. Vanguard, Fidelity) report only social links, so their Website is blank. `social_url` keeps company pages only; personal LinkedIn profiles are dropped. |
+# | **Websites** | The bulk file holds one URL per firm-year (often a social profile). Best domain chosen across six years by firm-name match. | ~82% of firms get a website: ~70% name-matched (high confidence), ~12% "latest" (lower confidence, flagged in `website_source`). Sub-domains are reduced to the main domain. Where a firm only ever reported a side site (e.g. Northern Trust's capitalmarketassumptions.com), that is what appears, flagged "latest". Full lists live in IAPD Schedule D 1.I. Some large managers (e.g. Vanguard, Fidelity) report only social links, so their Website is blank. `social_url` keeps company pages only; personal LinkedIn profiles are dropped. |
+# | **Location** | ~8% of filings leave the main-office address blank. Filled from the mailing address, then books-and-records address, then the firm's nearest other year. | Missing city falls from ~8% to ~3% of rows; `location_source` records where each came from. Non-US firms have a blank State and a `country`. |
 # | **Extreme ratios** | Firms reporting large AUM with 0–1 advisors are kept in the data table as filed. Zero denominators give blank ratios. | They are excluded from every ranking by the minimum-advisor thresholds, so they never reach a leaderboard. |
 # | **Platforms** | > 1,000 clients per advisor = digital / platform adviser | A heuristic. A few large human-advised firms with big call-centre models may be caught; they stay in the data table. |
 # | **Wealth-manager flag** | ≥ 50% of AUM from individuals + HNW clients | A judgment threshold. The Excel workbook keeps `pct_aum_individuals` so it can be moved. |
 
 # %%
 # ---- Export everything a reviewer or a sales team would want -------------------------------
-cols_latest = (["sec_number", "crd", "firm_name", "website", "website_source", "social_url", "city", "state", "segment",
+cols_latest = (["sec_number", "crd", "firm_name", "website", "website_source", "social_url", "city", "state", "country", "location_source", "segment",
                 "aum", "clients", "aum_per_client", "employees", "advisors", "aum_per_advisor",
                 "clients_per_advisor", "wealth_manager", "digital_or_platform", "pct_aum_individuals", "pct_aum_hnw", "filing_date"]
                + [f"{m}_{h}y" for h in (1, 3, 5) for m in ("aum_cagr", "advisor_cagr", "staffing_gap", "step_change", "advisor_step")]

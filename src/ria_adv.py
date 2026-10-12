@@ -80,6 +80,13 @@ BASE_COLS = {
     "Main Office City": "city",
     "Main Office State": "state",
     "Main Office Country": "country",
+    # fallbacks when the main-office fields are blank
+    "Mail Office City": "mail_city",
+    "Mail Office State": "mail_state",
+    "Mail Office Country": "mail_country",
+    "Location of Books and Records City": "books_city",
+    "Location of Books and Records State": "books_state",
+    "Location of Books and Records Country": "books_country",
     "Website Address": "website_raw",
     "SEC Current Status": "sec_status",
     "Latest ADV Filing Date": "filing_date",
@@ -114,7 +121,22 @@ SOCIAL_DOMAINS = (
     "threads.net", "yelp.com", "google.com", "douyin.com", "reddit.com", "weibo.com",
     "wechat.com", "bit.ly", "linktr.ee", "apple.com", "spotify.com", "medium.com",
     "substack.com", "glassdoor.com", "indeed.com", "wix.com", "squarespace.com",
+    # free hosting / page builders: a personal page, not the firm's domain
+    "wordpress.com", "blogspot.com", "wixsite.com", "weebly.com", "godaddysites.com",
+    "square.site", "carrd.co", "webflow.io", "github.io", "business.site",
 )
+
+# Second-level labels that sit under a country code (firm.co.uk, firm.com.au)
+_CC_SLD = {"co", "com", "org", "net", "ac", "gov", "or", "ne"}
+
+
+def registrable_domain(host: str) -> str:
+    """'connect.creativeplanning.com' -> 'creativeplanning.com';
+    'www.firm.co.uk' -> 'firm.co.uk'."""
+    labels = host.split(".")
+    if len(labels) >= 3 and labels[-2] in _CC_SLD and len(labels[-1]) == 2:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
 
 # --------------------------------------------------------------------------
 # Loading
@@ -146,8 +168,10 @@ def clean_website(url: str) -> str | float:
 
     * strips scheme, path, query, port and trailing dots
     * drops social-media profiles (not a firm website)
-    * adds 'www.' only to bare registrable domains (e.g. beaconpointe.com),
-      leaving genuine sub-domains (e.g. advisors.ubs.com) untouched
+    * drops pages on free hosting (wordpress.com, blogspot.com, ...)
+    * reduces sub-domains to the firm's main domain, as the brief's
+      'www.x.com' format asks: connect.creativeplanning.com ->
+      www.creativeplanning.com
     """
     if not isinstance(url, str) or not url.strip():
         return np.nan
@@ -160,11 +184,9 @@ def clean_website(url: str) -> str | float:
     host = u[4:] if u.startswith("www.") else u
     if any(host == d or host.endswith("." + d) for d in SOCIAL_DOMAINS):
         return np.nan
-    labels = host.split(".")
-    # two labels (beaconpointe.com) or a 2-letter-country second-level domain
-    # (firm.co.uk) count as a bare domain
-    bare = len(labels) == 2 or (len(labels) == 3 and labels[-2] in {"co", "com", "org", "net"} and len(labels[-1]) == 2)
-    return f"www.{host}" if bare else host
+    if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", host):   # not a hostname
+        return np.nan
+    return f"www.{registrable_domain(host)}"
 
 
 _NAME_STOPWORDS = {
@@ -180,6 +202,18 @@ def _name_tokens(name: str) -> set[str]:
     return {w for w in words if len(w) >= 3 and w not in _NAME_STOPWORDS}
 
 
+_LEGAL_SUFFIXES = {"llc", "inc", "lp", "llp", "ltd", "limited", "corp", "corporation",
+                   "incorporated", "co", "company", "the", "and", "of", "na", "plc", "sa", "ag"}
+
+
+def _initials(name: str) -> set[str]:
+    """Leading-word initials of 2+ letters: 'Goldman Sachs Asset Management, L.P.'
+    -> {'gs', 'gsa', 'gsam'}, so gsam.com counts as the firm's own domain."""
+    words = [w for w in re.findall(r"[a-z0-9]+", str(name).lower()) if w not in _LEGAL_SUFFIXES]
+    ini = "".join(w[0] for w in words)
+    return {ini[:k] for k in range(2, len(ini) + 1)}
+
+
 def choose_websites(p: pd.DataFrame) -> pd.DataFrame:
     """Pick one firm website per firm and fill it into every year.
 
@@ -188,8 +222,11 @@ def choose_websites(p: pd.DataFrame) -> pd.DataFrame:
     sometimes LinkedIn, sometimes an unrelated page (a parent company, a
     product microsite, a video-app link). Across all six years, each firm's
     candidate domains are scored:
-      1. the domain contains a distinctive word from the firm name (best)
-      2. otherwise, the most recently reported valid domain
+      1. the domain name IS a distinctive firm-name word or the firm's
+         initials (lpl.com, gsam.com, ml.com) (best)
+      2. the domain name contains a distinctive firm-name word
+      3. otherwise, the most recently reported valid domain
+    Ties go to the domain reported in the most years, then the most recent.
     Social links are kept separately in `social_url` as a fallback."""
     p["website_candidate"] = p["website_raw"].map(clean_website)
     raw = p["website_raw"].str.strip().str.lower()
@@ -203,9 +240,26 @@ def choose_websites(p: pd.DataFrame) -> pd.DataFrame:
         cands = grp.dropna(subset=["website_candidate"]).sort_values("year", ascending=False)
         if cands.empty:
             continue
-        match = [w for w in cands["website_candidate"]
-                 if any(t in w.replace("-", "") for t in tokens)]
-        best[sec] = (match[0], "name_match") if match else (cands["website_candidate"].iloc[0], "latest")
+        initials = set().union(*(_initials(n) for n in grp["firm_name"].unique()))
+        # score each distinct domain on its own name only ('www.lpl.com' -> 'lpl'):
+        #   3 = the label IS a firm-name word or the firm's initials (lpl.com, gsam.com, ml.com)
+        #   2 = the label contains a firm-name word (lplgovernmentrelations.com)
+        # ties go to the domain reported in the most years, then the most recent
+        scored = []
+        for w, yrs in cands.groupby("website_candidate")["year"]:
+            label = registrable_domain(w[4:]).split(".")[0].replace("-", "")
+            if label in tokens or label in initials:
+                s = 3
+            elif any(t in label for t in tokens):
+                s = 2
+            else:
+                s = 0
+            scored.append((s, len(yrs), yrs.max(), w))
+        s, _, _, w = max(scored)
+        if s > 0:
+            best[sec] = (w, "name_match")
+        else:
+            best[sec] = (cands["website_candidate"].iloc[0], "latest")
     p["website"] = p["sec_number"].map(lambda s: best.get(s, (np.nan, None))[0])
     p["website_source"] = p["sec_number"].map(lambda s: best.get(s, (None, "none"))[1])
     p["website_filled_flag"] = p["website"].notna() & (p["website"] != p["website_candidate"])
@@ -222,8 +276,20 @@ def load_snapshot(raw_dir: Path, snap: Snapshot) -> pd.DataFrame:
             df[col] = ""
     for col in NUMERIC:
         df[col] = _to_number(df[col])
-    for col in ["firm_name", "legal_name", "city", "state", "country", "sec_status"]:
+    loc_cols = ["city", "state", "country", "mail_city", "mail_state", "mail_country",
+                "books_city", "books_state", "books_country"]
+    for col in ["firm_name", "legal_name", "sec_status"] + loc_cols:
         df[col] = df[col].str.strip()
+    # Location: ~8% of filings leave the main-office address blank in the bulk
+    # file. Fall back to the mailing address, then the books-and-records
+    # address, taking city/state/country together from the same source.
+    df["location_source"] = np.where(df["city"] != "", "main_office", "")
+    for src in ["mail", "books"]:
+        use = (df["city"] == "") & (df[f"{src}_city"] != "")
+        for f in ["city", "state", "country"]:
+            df.loc[use, f] = df.loc[use, f"{src}_{f}"]
+        df.loc[use, "location_source"] = f"{src}_address"
+    df = df.drop(columns=[c for c in loc_cols if "_" in c])
     df["sec_number"] = df["sec_number"].str.strip().str.upper()
     # CSV years use MM/DD/YYYY; the Excel years come through as ISO timestamps
     df["filing_date"] = pd.to_datetime(df["filing_date"].str.strip(), format="mixed",
@@ -283,6 +349,17 @@ def build_panel(raw_dir: str | Path, cache_dir: str | Path | None = None
 def derive_fields(p: pd.DataFrame) -> pd.DataFrame:
     p = p.copy().sort_values(["sec_number", "year"])
     p = choose_websites(p)
+
+    # ---- location: last resort, borrow the firm's address from its nearest
+    # other year (offices rarely move; flagged as 'other_year')
+    loc = ["city", "state", "country"]
+    blank = p["city"].fillna("") == ""
+    filled = (p[loc].replace("", np.nan).where(~blank)
+              .groupby(p["sec_number"]).transform(lambda s: s.ffill().bfill()))
+    use = blank & filled["city"].notna()
+    p.loc[use, loc] = filled.loc[use, loc].fillna("")
+    p.loc[use, "location_source"] = "other_year"
+    p.loc[p["city"].fillna("") == "", "location_source"] = "none"
 
     # ---- clients -----------------------------------------------------------
     counts = p[[f"clients_{t}" for t in CLIENT_TYPES]].fillna(0)

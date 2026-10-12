@@ -43,8 +43,8 @@ all from early September, so the 1-, 3- and 5-year comparisons are exactly 12, 3
 |---|---|---|
 | SEC# | `SEC#` (801-xxxxx) | Validated format. Duplicates resolved to the latest filing |
 | Firm Name | Primary Business Name | |
-| Website | Website Address | Normalised to `www.domain.com`. Social links dropped. The firm's own domain is chosen across years by name match |
-| City / State | Main Office City / State | Non-US firms keep their country |
+| Website | Website Address | Normalised to `www.domain.com` (sub-domains reduced to the main domain). Social links and free-hosting pages dropped. The firm's own domain is chosen across all six years by name or initials match |
+| City / State | Main Office City / State (+ Country) | If blank, filled from the mailing address, then books-and-records address, then another year (`location_source`). Non-US firms have a blank State and a Country |
 | AUM | Item 5.F(2)(c) | Regulatory AUM, total |
 | Number of Clients | Σ Item 5.D(a–n)(1) + Item 5.C(1) | "Fewer than 5" imputed as 2. Typo guard on 5.C(1) (see notebook §2) |
 | Avg AUM / Client | AUM ÷ clients | NaN when clients = 0 |
@@ -75,7 +75,7 @@ events. Section 8 combines growth, staffing gap and client load into a single ta
 - Form ADV "advisors" includes non-client-facing investment staff, so ratios compare firms within a segment, rather than measure absolute workloads.
 - Only SEC-registered advisers are covered. State-registered firms (mostly <$100M) are out of scope.
 - Firms that de-registered drop out, so long-horizon rankings have survivorship bias.
-- About 20% of firms list no usable website (ex. only social-media links). Those are kept, with `social_url` as a fallback.
+- About 18% of firms list no usable website (ex. only social-media links). Those are kept, with `social_url` as a fallback. The SEC file holds one URL per firm-year, so where a firm only ever reported a side site, that is what appears (flagged `latest` in `website_source`).
 
 The full list is in notebook §9.
 
