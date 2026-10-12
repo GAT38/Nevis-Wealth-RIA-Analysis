@@ -215,8 +215,35 @@ EXTRA = ["segment", "wealth_manager", "digital_or_platform", "pct_aum_individual
          "clients_per_advisor", "website_source", "social_url", "crd", "legal_name", "sec_status", "snapshot_date", "source_file",
          "clients_imputed_flag", "clients_5c_invalid_flag", "website_filled_flag", "succession_flag"]
 
-table = panel[list(REQUIRED) + EXTRA].sort_values(["year", "aum"], ascending=[True, False])
-table.rename(columns=REQUIRED).to_csv(OUT / "ria_panel_2021_2026.csv", index=False)
+EXTRA_NAMES = {
+    "segment": "Segment", "wealth_manager": "Wealth Manager", "digital_or_platform": "Digital or Platform",
+    "pct_aum_individuals": "% AUM Individuals", "pct_aum_hnw": "% AUM HNW",
+    "clients_per_advisor": "Clients per Advisor", "website_source": "Website Source",
+    "social_url": "Social URL", "crd": "CRD#", "legal_name": "Legal Name", "sec_status": "SEC Status",
+    "snapshot_date": "Snapshot Date", "source_file": "Source File",
+    "clients_imputed_flag": "Flag: Clients Imputed", "clients_5c_invalid_flag": "Flag: Client Count Typo Removed",
+    "website_filled_flag": "Flag: Website From Another Year", "succession_flag": "Flag: Succession",
+}
+
+
+def tidy(df: pd.DataFrame) -> pd.DataFrame:
+    """Presentation rounding for exports: whole dollars and counts, 1 dp ratios, 4 dp shares/rates."""
+    df = df.copy()
+    whole = ["aum", "clients", "employees", "advisors", "aum_per_client", "aum_per_advisor", "crd"]
+    whole += [c for c in df.columns if c.startswith(("aum_", "advisors_", "clients_")) and c.endswith("y_ago")]
+    for c in whole:
+        if c in df:
+            df[c] = df[c].round(0).astype("Int64")
+    for c in df.columns:
+        if c == "clients_per_advisor":
+            df[c] = df[c].round(1)
+        elif c.startswith(("pct_", "aum_cagr", "advisor_cagr", "clients_cagr", "staffing_gap", "nevis_score")):
+            df[c] = df[c].round(4)
+    return df
+
+
+table = panel[list(REQUIRED) + EXTRA].sort_values(["year", "aum"], ascending=[False, False])
+tidy(table).rename(columns={**REQUIRED, **EXTRA_NAMES}).to_csv(OUT / "ria_panel_2021_2026.csv", index=False)
 
 print(f"{len(table):,} firm-year rows · {table['sec_number'].nunique():,} distinct firms · "
       f"{len(table.columns)} columns → outputs/ria_panel_2021_2026.csv")
@@ -626,7 +653,8 @@ pd.DataFrame({
 # | **Firm identity** | Firm = SEC# (801-). Re-registrations under a new SEC# and multi-entity groups (e.g. separate RIAs for one brand) are not merged. | Some "new" fast growers are reorganisations; flagged via the step-change rule. |
 # | **Survivorship** | Growth requires presence in both years. Firms that deregistered or moved to state registration drop out. | Rankings describe surviving firms, which is the right population for prospecting. |
 # | **Segment boundaries** | Lower bound inclusive: exactly $1B is in "$1B–$10B". | Negligible. |
-# | **Websites** | The bulk file holds one URL per firm-year (often a social profile). Best domain chosen across six years by firm-name match. | ~80% of firms get a website: ~2/3 name-matched (high confidence), ~1/8 "latest" (lower confidence, flagged in `website_source`). Full lists live in IAPD Schedule D 1.I. |
+# | **Websites** | The bulk file holds one URL per firm-year (often a social profile). Best domain chosen across six years by firm-name match. | ~80% of firms get a website: ~2/3 name-matched (high confidence), ~1/8 "latest" (lower confidence, flagged in `website_source`). Full lists live in IAPD Schedule D 1.I. Some large managers (e.g. Vanguard, Fidelity) report only social links, so their Website is blank. `social_url` keeps company pages only; personal LinkedIn profiles are dropped. |
+# | **Extreme ratios** | Firms reporting large AUM with 0–1 advisors are kept in the data table as filed. Zero denominators give blank ratios. | They are excluded from every ranking by the minimum-advisor thresholds, so they never reach a leaderboard. |
 # | **Platforms** | > 1,000 clients per advisor = digital / platform adviser | A heuristic. A few large human-advised firms with big call-centre models may be caught; they stay in the data table. |
 # | **Wealth-manager flag** | ≥ 50% of AUM from individuals + HNW clients | A judgment threshold. The Excel workbook keeps `pct_aum_individuals` so it can be moved. |
 
@@ -658,12 +686,21 @@ sheets = {
     "nevis_targets": targets.head(100)[["nevis_score"] + cols_latest],
 }
 with pd.ExcelWriter(OUT / "nevis_ria_analysis.xlsx", engine="xlsxwriter") as xw:
+    money_fmt = xw.book.add_format({"num_format": "#,##0"})
+    pct_fmt = xw.book.add_format({"num_format": "0.0%"})
     for name, df in sheets.items():
-        df = df.copy()
+        df = tidy(df)
         for c in df.select_dtypes(include=["datetimetz", "datetime"]).columns:
             df[c] = df[c].dt.date
         if "segment" in df:
             df["segment"] = df["segment"].astype(str)
         df.to_excel(xw, sheet_name=name[:31], index=False)
-        xw.sheets[name[:31]].freeze_panes(1, 0)
+        ws = xw.sheets[name[:31]]
+        ws.freeze_panes(1, 0)
+        for i, c in enumerate(df.columns):  # readable number formats in Excel
+            c = str(c)
+            if c in ("aum", "aum_per_client", "aum_per_advisor", "clients", "employees", "advisors") or c.endswith("y_ago"):
+                ws.set_column(i, i, 16, money_fmt)
+            elif c.startswith(("pct_", "aum_cagr", "advisor_cagr", "clients_cagr", "staffing_gap")):
+                ws.set_column(i, i, 12, pct_fmt)
 print("wrote outputs/nevis_ria_analysis.xlsx with sheets:", ", ".join(sheets))

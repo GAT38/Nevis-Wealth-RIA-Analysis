@@ -194,6 +194,8 @@ def choose_websites(p: pd.DataFrame) -> pd.DataFrame:
     p["website_candidate"] = p["website_raw"].map(clean_website)
     raw = p["website_raw"].str.strip().str.lower()
     is_social = raw.str.contains(r"linkedin|facebook|twitter|instagram|youtube|x\.com", regex=True)
+    # keep only firm pages: personal LinkedIn profiles (linkedin.com/in/...) are an employee's page
+    is_social &= ~raw.str.contains(r"linkedin\.com/(?:in|pub)/", regex=True, na=False)
 
     best = {}
     for sec, grp in p[["sec_number", "year", "firm_name", "website_candidate"]].groupby("sec_number"):
