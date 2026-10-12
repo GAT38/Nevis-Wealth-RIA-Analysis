@@ -29,7 +29,7 @@ python tools/build_notebook.py notebooks/ria_analysis.py notebooks/ria_analysis.
 ```
 
 The first run parses the raw files (about a minute) and caches each snapshot under `data/processed/cache/`.
-After that a full run takes seconds.
+After that, a full run takes seconds.
 
 ## Data
 
@@ -60,26 +60,28 @@ reclassifications, `website_source`, `clients_5c_invalid_flag`).
 
 ## Approach in one paragraph
 
-Build a clean firm-year panel, then segment by 2026 AUM (<$1B, $1–10B, $10–50B, >$50B). **Q1** ranks AUM
-CAGR over 1, 3 and 5 years. The ranking is organic by default, with a separate M&A-inclusive view.
+Build a clean firm-year panel, then segment by 2026 AUM (<$1B, $1–10B, $10–50B, >$50B).
+**Q1**
+ranks AUM CAGR over 1, 3 and 5 years. The ranking is organic by default, with a separate M&A-inclusive view.
 **Q2** ranks AUM per advisor among advice-led wealth managers with ≥3 advisors, against the segment
-median. **Q3** ranks the staffing gap (AUM CAGR − advisor CAGR) for established firms (≥$100M AUM and
+median.
+**Q3** ranks the staffing gap (AUM CAGR − advisor CAGR) for established firms (≥$100M AUM and
 ≥5 advisors at the base year). It excludes acquisitions, headcount reclassifications and succession
 events. Section 8 combines growth, staffing gap and client load into a single target score for Nevis.
 
 ## Key assumptions & limitations
 
 - Regulatory AUM includes market moves. Growth figures are not net flows.
-- Form ADV "advisors" includes non-client-facing investment staff, so ratios compare firms within a segment rather than measure absolute workloads.
+- Form ADV "advisors" includes non-client-facing investment staff, so ratios compare firms within a segment, rather than measure absolute workloads.
 - Only SEC-registered advisers are covered. State-registered firms (mostly <$100M) are out of scope.
 - Firms that de-registered drop out, so long-horizon rankings have survivorship bias.
-- About 20% of firms list no usable website (for example, only social-media links). Those are kept, with `social_url` as a fallback.
+- About 20% of firms list no usable website (ex. only social-media links). Those are kept, with `social_url` as a fallback.
 
 The full list is in notebook §9.
 
 ## How I used AI
 
-I built this with Claude (Anthropic) as a pair analyst, which is how I would expect to work at Nevis.
+I built this using Claude for some tasks, which is how I would expect to work at Nevis.
 
 - **What AI did:** retrieved and read the Form ADV instructions to map fields, wrote first drafts of the parsing and analysis code, and ran the notebook end to end.
 - **What I did:** set the questions, made the judgement calls (what counts as organic growth, who counts as a wealth manager, the segment cut-offs, the target-score design) and checked the outputs against real firms.
